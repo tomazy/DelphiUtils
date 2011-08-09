@@ -1,0 +1,48 @@
+﻿	<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+		<PropertyGroup>
+			<ProjectGuid>{7779F189-F899-47A5-9FAA-73FA2505277B}</ProjectGuid>
+		</PropertyGroup>
+		<ItemGroup>
+			<Projects Include="UnitTesting\src\Demo.dproj">
+				<Dependencies/>
+			</Projects>
+			<Projects Include="UnitTesting\test\DemoTests.dproj">
+				<Dependencies/>
+			</Projects>
+		</ItemGroup>
+		<ProjectExtensions>
+			<Borland.Personality>Default.Personality.12</Borland.Personality>
+			<Borland.ProjectType/>
+			<BorlandProject>
+				<Default.Personality/>
+			</BorlandProject>
+		</ProjectExtensions>
+		<Target Name="Demo">
+			<MSBuild Projects="UnitTesting\src\Demo.dproj"/>
+		</Target>
+		<Target Name="Demo:Clean">
+			<MSBuild Targets="Clean" Projects="UnitTesting\src\Demo.dproj"/>
+		</Target>
+		<Target Name="Demo:Make">
+			<MSBuild Targets="Make" Projects="UnitTesting\src\Demo.dproj"/>
+		</Target>
+		<Target Name="DemoTests">
+			<MSBuild Projects="UnitTesting\test\DemoTests.dproj"/>
+		</Target>
+		<Target Name="DemoTests:Clean">
+			<MSBuild Targets="Clean" Projects="UnitTesting\test\DemoTests.dproj"/>
+		</Target>
+		<Target Name="DemoTests:Make">
+			<MSBuild Targets="Make" Projects="UnitTesting\test\DemoTests.dproj"/>
+		</Target>
+		<Target Name="Build">
+			<CallTarget Targets="Demo;DemoTests"/>
+		</Target>
+		<Target Name="Clean">
+			<CallTarget Targets="Demo:Clean;DemoTests:Clean"/>
+		</Target>
+		<Target Name="Make">
+			<CallTarget Targets="Demo:Make;DemoTests:Make"/>
+		</Target>
+		<Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+	</Project>

@@ -1,0 +1,11 @@
+*.*~
+*.dcu
+*.drc
+*.exe
+*.identcache
+*.local
+*.map
+*.res
+*~
+__history
+dunit.ini
