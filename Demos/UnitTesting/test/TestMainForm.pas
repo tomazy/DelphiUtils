@@ -117,7 +117,7 @@ end;
 
 procedure TMainFormTestCase.TestAddManyStudents;
 const
-  NUM_STUDENTS = 5;
+  NUM_STUDENTS = 10;
 begin
   CheckEquals(0, FMainForm.CurrentCourse.StudentsCount);
 
@@ -168,7 +168,7 @@ begin
 
     // close future confirmation dialog
     TFutureWindows.ExpectChild(FMainForm.Handle, '#32770', 1)
-      .ExecAction(TFutureWindows.CreateSendKeyAction(VK_RETURN));
+      .ExecSendKey(VK_RETURN);
 
     ExecuteAction(FMainForm.acDeleteStudent);
 

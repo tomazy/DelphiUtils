@@ -69,9 +69,25 @@ type
   TStudentEditDialogTestCase = class(TTestCaseBase)
   published
     procedure TestEdit;
+    procedure TestCloseAction;
   end;
 
 { TStudentEditDialogTestCase }
+
+procedure TStudentEditDialogTestCase.TestCloseAction;
+var
+  student: IStudent;
+  futureWindow: IFutureWindow;
+begin
+  student := TModel.CreateStudent();
+
+  futureWindow := TFutureWindows.Expect(TStudentEditDialog.ClassName)
+    .ExecPauseAction(0.2, Application.ProcessMessages)
+    .ExecCloseWindow()
+    ;
+
+  CheckFalse(TStudentEditDialog.Edit(student));
+end;
 
 procedure TStudentEditDialogTestCase.TestEdit;
 var
@@ -93,8 +109,7 @@ begin
 
   Check(TStudentEditDialog.Edit(student));
 
-  Check(futureWindow.WaitFor, 'timeout when waiting for window: ' + futureWindow.Description);
-
+  Check(futureWindow.WindowFound, 'window not found: ' + futureWindow.Description);
 
   CheckEquals(NAME, student.Name);
   CheckEquals(EMAIL, student.Email);
