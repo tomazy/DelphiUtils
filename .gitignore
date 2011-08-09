@@ -6,6 +6,7 @@
 *.local
 *.map
 *.res
+*.tvsconfig
 *~
 __history
 dunit.ini
