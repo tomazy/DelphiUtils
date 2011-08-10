@@ -47,15 +47,19 @@ uses
 
 class procedure TTestCaseBase.ProcessMessages(AWaitSeconds: Double);
 var
-  finish: Cardinal;
+  now, finish: Cardinal;
 begin
   if AWaitSeconds = 0 then
     Application.ProcessMessages()
   else
   begin
-    finish := GetTickCount + Round(AWaitSeconds * 1000);
-    while GetTickCount < finish do
+    now := GetTickCount;
+    finish := now + Round(AWaitSeconds * 1000);
+    while now < finish do
+    begin
       Application.ProcessMessages();
+      now := GetTickCount;
+    end;
   end;
 end;
 

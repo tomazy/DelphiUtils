@@ -43,7 +43,9 @@ uses
   uMainForm,
   uStudentEditDialog,
   TestStudentEditDialog,
-  SysUtils, uModel, Windows;
+  SysUtils,
+  uModel,
+  Windows;
 
 type
   TMainFormTestCase = class(TTestCaseBase)
@@ -167,7 +169,7 @@ begin
     Check(student = FMainForm.CurrentStudent);
 
     // close future confirmation dialog
-    TFutureWindows.ExpectChild(FMainForm.Handle, '#32770', 1)
+    TFutureWindows.ExpectChild(FMainForm.Handle, MESSAGE_BOX_WINDOW_CLASS, 1)
       .ExecSendKey(VK_RETURN);
 
     ExecuteAction(FMainForm.acDeleteStudent);

@@ -26,8 +26,10 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 History:
-
+ 2011-08-08 - [tm] initial thread-based version
+ 2011-08-09 - [tm] refactored to non-threaded implementation
 }
+{.$define EnableLogging}
 unit FutureWindows;
 interface
 uses
@@ -35,6 +37,9 @@ uses
   Classes,
   Controls;
 
+const
+  MESSAGE_BOX_WINDOW_CLASS = '#32770';
+  DEFAULT_WAIT_TIME_SECS = 5.0;
 type
   IFutureWindowAction = interface
     ['{8383E04C-F238-4505-94C2-B104A9467D0F}']
@@ -66,15 +71,14 @@ type
   end;
 
   TFutureWindows = class
-    class function Expect(const AWindowClass: string; AWaitSeconds: Cardinal = 5): IFutureWindow;
-    class function ExpectChild(AParent: HWND; const AWindowClass: string; AWaitSeconds: Cardinal = 5): IFutureWindow;
+    class function Expect(const AWindowClass: string; AWaitSeconds: Double =  DEFAULT_WAIT_TIME_SECS): IFutureWindow;
+    class function ExpectChild(AParent: HWND; const AWindowClass: string; AWaitSeconds: Double = DEFAULT_WAIT_TIME_SECS): IFutureWindow;
   end;
 
 implementation
 uses
   Messages,
-  SysUtils,
-  Contnrs;
+  SysUtils;
 
 type
   TAbstractFutureWindow = class(TInterfacedObject, IFutureWindow)
@@ -93,96 +97,12 @@ type
     function ExecSendKey(AKey: Word): IFutureWindow;
     function GetDesciption: string; virtual; abstract;
     function TimedOut: Boolean; virtual; abstract;
-    function WaitFor: Boolean; virtual; abstract;
     function WindowFound: Boolean; virtual; abstract;
-  protected
-    property ActionsCount: Integer read GetActionsCount;
-    property Actions[AIndex: Integer]: IFutureWindowAction read GetAction;
-  end;
-
-  TFutureWindowSharedData = class
-  strict private
-    FParentWnd: HWND;
-    FTimedOut: Boolean;
-    FWaitSecs: Cardinal;
-    FWindowClass: string;
-    FWindowHandle: HWND;
-    procedure SetTimedOut(const Value: Boolean);
-    procedure SetWindowHandle(const Value: HWND);
-  public
-    constructor Create(const AWindowClass: string; AParentWnd: HWND; AWaitSecs: Cardinal);
-    destructor Destroy; override;
-    property ParentWnd: HWND read FParentWnd;
-    property TimedOut: Boolean read FTimedOut write SetTimedOut;
-    property WaitSecs: Cardinal read FWaitSecs;
-    property WindowClass: string read FWindowClass;
-    property WindowHandle: HWND read FWindowHandle write SetWindowHandle;
-  end;
-
-  TFindWindowThread = class(TThread)
-  strict private
-    FSharedData: TFutureWindowSharedData;
-    FCurrProcessId: Cardinal;
-    FNotifyWnd: HWND;
-  private
-    function EnumCheckWindow(AHandle: HWND): Boolean;
-  protected
-    procedure Execute; override;
-  public
-    constructor Create(ASharedData: TFutureWindowSharedData; ANotifyWnd: HWND);
-    destructor Destroy; override;
-  end;
-
-  TThreadedFutureWindow = class(TAbstractFutureWindow)
-  strict private
-    FThread: TFindWindowThread;
-    FSharedData: TFutureWindowSharedData;
-    FMessageArrived: Boolean;
-    procedure CheckStartThread;
-    procedure HandleThreadFinished(Sender: TObject);
-  protected
-    function GetDesciption: string; override;
-    function StartWaiting(): IFutureWindow; override;
-    function TimedOut: Boolean; override;
-    function WaitFor: Boolean; override;
-    function WindowFound: Boolean; override;
-  public
-    constructor Create(AParent: HWND; const AWindowClass: string; AWaitSecs: Cardinal);
-    destructor Destroy; override;
-  end;
-
-  TWindowFoundEvent = procedure (Sender: TObject; AHandle: HWND) of object;
-
-  TTheadSynchronizer = class
-  strict private type
-     TThreadReg = class
-       handle: THandle;
-       on_finished: TNotifyEvent;
-     end;
-  strict private
-    class var FInstance: TTheadSynchronizer;
-  strict private
-    FHandle: THandle;
-    FRegistry: TList;
-    function FindByThreadHandle(AHandle: THandle; out AIndex: Integer): Boolean;
-    procedure NotifyThreadFinished(AThreadHandle: THandle);
-    procedure WndProc(var AMsg: TMessage);
-  private
-    class procedure Finalize;
-  public
-    constructor Create();
-    destructor Destroy; override;
-    class function GetInstance:  TTheadSynchronizer;
-    procedure SynchronizeThread(AHandle: THandle; AOnThreadFinished: TNotifyEvent);
-    procedure RemoveThread(AThreadHandle: THandle);
-    property Handle: THandle read FHandle;
   end;
 
 //==============================================================================
-// Non-threaded version
-const
-  WM_CHECK_FUTURE_WINDOWS = WM_USER + 1;
-type
+// Non-threaded IFutureWindow implementation
+
   IFutureWindowEx = interface(IFutureWindow)
     ['{664A768E-7FB4-4397-96E0-0EF5619ABE0B}']
     procedure CheckWindow(AHandle: HWND);
@@ -195,7 +115,9 @@ type
   strict private
     FHandle: THandle;
     FFutureWindows: IInterfaceList;
+    FWindowsToUnregister: IInterfaceList;
     FCurrentProcessId: Cardinal;
+    FNotifying: Boolean;
     function GetFutureWindow(AIndex: Integer): IFutureWindowEx;
     function GetFutureWindowsCount: Integer;
     procedure StartTimer;
@@ -214,11 +136,11 @@ type
     class property Instance: TFutureWindowObserver read GetInstance;
   end;
 
-  TNonThreadedFutureWindow = class(TAbstractFutureWindow, IFutureWindowEx)
+  TFutureWindow = class(TAbstractFutureWindow, IFutureWindowEx)
   strict private
     FParentWnd: HWND;
     FTimedOut: Boolean;
-    FWaitSecs: Cardinal;
+    FWaitSecs: Double;
     FWindowClass: string;
     FWindowFound: Boolean;
     FStartedMillis: Cardinal;
@@ -229,10 +151,10 @@ type
     function GetDesciption: string; override;
     function StartWaiting(): IFutureWindow; override;
     function TimedOut: Boolean; override;
-    function WaitFor: Boolean; override;
     function WindowFound: Boolean; override;
   public
-    constructor Create(AParent: HWND; const AWindowClass: string; AWaitSecs: Cardinal);
+    constructor Create(AParent: HWND; const AWindowClass: string; AWaitSecs: Double);
+    destructor Destroy; override;
   end;
 
 //===================== ACTIONS ================================================
@@ -260,365 +182,31 @@ type
     constructor Create(ASeconds: Double; AProcessMessagesProc: TProcessMessagesProc);
   end;
 
-const
-  WM_THREAD_FINISHED = WM_USER + 1;
+
+{$ifdef EnableLogging}
+  procedure log(const AMsg: string);
+  var
+    msg: string;
+  begin
+    msg := Format('[FutureWindows][%.4d] %s', [GetCurrentThreadId, AMsg]);
+    OutputDebugString(PChar(msg));
+  end;
+{$endif}
 
 { TFutureWindows }
-
-procedure log(const AMsg: string);
-var
-  msg: string;
-begin
-  msg := Format('[%.4d] %s', [GetCurrentThreadId, AMsg]);
-  OutputDebugString(PChar(msg));
-end;
-
 class function TFutureWindows.Expect(const AWindowClass: string;
-  AWaitSeconds: Cardinal): IFutureWindow;
+  AWaitSeconds: Double): IFutureWindow;
 begin
   Result := ExpectChild(0, AWindowClass, AWaitSeconds)
 end;
 
 class function TFutureWindows.ExpectChild(AParent: HWND;
-  const AWindowClass: string; AWaitSeconds: Cardinal): IFutureWindow;
+  const AWindowClass: string; AWaitSeconds: Double): IFutureWindow;
 begin
-//  Result := TThreadedFutureWindow.Create(AParent, AWindowClass, AWaitSeconds);
-  Result := TNonThreadedFutureWindow.Create(AParent, AWindowClass, AWaitSeconds);
-end;
-
-{ TFutureWindow }
-
-procedure TThreadedFutureWindow.CheckStartThread;
-begin
-  if FThread = nil then
-  begin
-    FThread := TFindWindowThread.Create(FSharedData, TTheadSynchronizer.GetInstance.Handle);
-    //FThread.OnTerminate := HandleThreadTerminated;
-    //FThread.FreeOnTerminate := True;
-    TTheadSynchronizer.GetInstance.SynchronizeThread(FThread.Handle, HandleThreadFinished);
-    FThread.Start;
-  end;
-end;
-
-constructor TThreadedFutureWindow.Create(AParent: HWND; const AWindowClass: string; AWaitSecs: Cardinal);
-begin
-  inherited Create;
-  FSharedData := TFutureWindowSharedData.Create(AWindowClass, AParent, AWaitSecs);
-end;
-
-destructor TThreadedFutureWindow.Destroy;
-begin
-  if FThread <> nil then
-  begin
-    TTheadSynchronizer.GetInstance.RemoveThread(FThread.Handle);
-    FThread.Free;
-  end;
-  FSharedData.Free;
-  inherited;
-end;
-
-function TThreadedFutureWindow.GetDesciption: string;
-begin
-  Result := FSharedData.WindowClass;
-end;
-
-procedure TThreadedFutureWindow.HandleThreadFinished(Sender: TObject);
-begin
-  log('thread finished notification');
-  if FSharedData.WindowHandle <> 0 then
-    ExecuteActions(FSharedData.WindowHandle);
-  FMessageArrived := True;
-end;
-
-function TThreadedFutureWindow.StartWaiting: IFutureWindow;
-begin
-  CheckStartThread;
-  Result := Self;
-end;
-
-function TThreadedFutureWindow.TimedOut: Boolean;
-begin
-  Result := FSharedData.TimedOut
-end;
-
-function TThreadedFutureWindow.WaitFor: Boolean;
-var
-  res: Cardinal;
-  handles: array[0..0] of THandle;
-  msg: TMsg;
-begin
-  log('waitfor: ' + FSharedData.WindowClass);
-  CheckStartThread;
-  if not FThread.Finished then
-  begin
-    handles[0] := FThread.Handle;
-    while True do
-    begin
-      res := MsgWaitForMultipleObjects(1, handles, False, INFINITE, QS_ALLEVENTS);
-      case res of
-         WAIT_OBJECT_0:
-           begin
-             // the thread terminated. We need to wait for the message to arrive
-             // noop;
-             log('thread terminated. wnd: ' + IntToStr(FSharedData.WindowHandle));
-           end;
-         WAIT_OBJECT_0 + 1:
-           begin
-             // we have a message. peek and dispatch
-             if PeekMessage(msg, 0, 0, 0, PM_REMOVE) then
-             begin
-               log('msg arrived: ' + IntToStr(msg.message));
-
-               TranslateMessage(msg);
-               DispatchMessage(msg);
-             end;
-
-             // break the loop if we got the notification
-             if FMessageArrived then
-               Break;
-           end;
-      else
-        RaiseLastOSError;
-      end;
-    end;
-  end;
-  Result := not FSharedData.TimedOut;
-end;
-
-function TThreadedFutureWindow.WindowFound: Boolean;
-begin
-  Result := FSharedData.WindowHandle <> 0;
-end;
-
-{ TFindWindowThread }
-constructor TFindWindowThread.Create(ASharedData: TFutureWindowSharedData; ANotifyWnd: HWND);
-begin
-  inherited Create(True);
-  FSharedData := ASharedData;
-  FCurrProcessId := GetCurrentProcessId;
-  FNotifyWnd := ANotifyWnd;
-end;
-
-destructor TFindWindowThread.Destroy;
-begin
-  inherited;
-end;
-
-function enum_windows_proc(AHandle: HWND; AParam: LPARAM): Boolean; stdcall;
-var
-  thread: TFindWindowThread;
-begin
-  thread := TFindWindowThread(AParam);
-  Result := thread.EnumCheckWindow(AHandle);
-end;
-
-function TFindWindowThread.EnumCheckWindow(AHandle: HWND): Boolean;
-var
-  buffer: array[Byte] of Char;
-  wnd_process_id: Cardinal;
-begin
-  if Terminated then
-    Result := False
-  else
-  begin
-    Result := True;
-    Windows.GetWindowThreadProcessId(AHandle, wnd_process_id);
-    if (wnd_process_id = FCurrProcessId) and
-      IsWindowVisible(AHandle) and
-      IsWindowEnabled(AHandle) and
-      ((FSharedData.ParentWnd = 0) or (Windows.GetParent(AHandle) = FSharedData.ParentWnd)) then
-    begin
-      Windows.GetClassName(AHandle, @buffer, Length(buffer));
-      if StrComp(buffer, PChar(FSharedData.WindowClass)) = 0 then
-      begin
-        FSharedData.WindowHandle := AHandle;
-        Result := False;
-      end
-    end;
-  end;
-end;
-
-procedure TFindWindowThread.Execute;
-var
-  finish: Cardinal;
-  secs: Cardinal;
-begin
-  secs := FSharedData.WaitSecs;
-  if secs = 0 then
-    secs := 5{min} * 60{sec}; // 5 minutes should be enough for debugging
-
-  finish := GetTickCount + secs * 1000;
-  while not Terminated do
-  begin
-    //EnumChildWindows(FParent, @enum_windows_proc, Integer(Self));
-    EnumWindows(@enum_windows_proc, Integer(Self));
-
-    if (FSharedData.WindowHandle <> 0) then
-    begin
-      log('window found: ' + FSharedData.WindowClass + ', ' + IntToStr(FSharedData.WindowHandle));
-      Break;
-    end;
-
-    if GetTickCount > finish then
-    begin
-      log('timeout: ' + FSharedData.WindowClass);
-      FSharedData.TimedOut := True;
-      Break;
-    end;
-
-    Sleep(100);
-  end;
-  PostMessage(FNotifyWnd, WM_THREAD_FINISHED, Handle, 0);
-end;
-
-{ TVCLControlAction }
-
-procedure TVCLControlAction.Execute(AWindow: HWND);
-var
-  control: TControl;
-begin
-  control := FindControl(AWindow);
-  Assert(control <> nil);
-  DoExecute(control);
-end;
-
-{ TTheadSynchronizer }
-
-constructor TTheadSynchronizer.Create;
-begin
-  inherited Create;
-  FHandle := AllocateHWnd(WndProc);
-  FRegistry := TObjectList.Create;
-end;
-
-destructor TTheadSynchronizer.Destroy;
-begin
-  FRegistry.Free;
-  DeallocateHWnd(FHandle);
-  inherited;
-end;
-
-class procedure TTheadSynchronizer.Finalize;
-begin
-  FInstance.Free;
-end;
-
-function TTheadSynchronizer.FindByThreadHandle(AHandle: THandle;
-  out AIndex: Integer): Boolean;
-var
-  i: Integer;
-begin
-  for i := 0 to FRegistry.Count - 1 do
-  begin
-    if TThreadReg(FRegistry[i]).handle = AHandle then
-    begin
-      Result := True;
-      AIndex := i;
-      Exit;
-    end;
-  end;
-  Result := False;
-  AIndex := -1;
-end;
-
-class function TTheadSynchronizer.GetInstance: TTheadSynchronizer;
-begin
-  if FInstance = nil then
-    FInstance := TTheadSynchronizer.Create;
-  Result := FInstance;
-end;
-
-procedure TTheadSynchronizer.NotifyThreadFinished(AThreadHandle: THandle);
-var
-  r: TThreadReg;
-  idx: Integer;
-  event: TNotifyEvent;
-begin
-  if FindByThreadHandle(AThreadHandle, idx) then
-  begin
-    r := FRegistry[idx];
-    event := r.on_finished;
-    FRegistry.Delete(idx);
-    event(Self);
-  end;
-end;
-
-procedure TTheadSynchronizer.RemoveThread(AThreadHandle: THandle);
-var
-  idx: Integer;
-begin
-  if FindByThreadHandle(AThreadHandle, idx) then
-    FRegistry.Delete(idx);
-end;
-
-procedure TTheadSynchronizer.SynchronizeThread(AHandle: THandle; AOnThreadFinished: TNotifyEvent);
-var
-  r: TThreadReg;
-begin
-  Assert(AHandle <> 0);
-  r := TThreadReg.Create;
-  r.handle := AHandle;
-  r.on_finished := AOnThreadFinished;
-  FRegistry.Add(r);
-end;
-
-procedure TTheadSynchronizer.WndProc(var AMsg: TMessage);
-begin
-  case AMsg.Msg of
-    WM_THREAD_FINISHED:
-      NotifyThreadFinished(AMsg.WParam);
-  else
-    DefWindowProc(Handle, AMsg.Msg, AMsg.WParam, AMsg.LParam)
-  end;
-end;
-
-{ TFutureWindowSharedData }
-
-constructor TFutureWindowSharedData.Create(const AWindowClass: string; AParentWnd: HWND; AWaitSecs: Cardinal);
-begin
-  inherited Create;
-  FWindowClass := AWindowClass;
-  FParentWnd := AParentWnd;
-  FWaitSecs := AWaitSecs;
-end;
-
-destructor TFutureWindowSharedData.Destroy;
-begin
-  inherited;
-end;
-
-procedure TFutureWindowSharedData.SetTimedOut(const Value: Boolean);
-begin
-  FTimedOut := Value;
-end;
-
-procedure TFutureWindowSharedData.SetWindowHandle(const Value: HWND);
-begin
-  FWindowHandle := Value;
-end;
-
-{ TSendVKeyAction }
-
-constructor TSendKeyAction.Create(AKey: Word);
-begin
-  FKey := AKey
-end;
-
-procedure TSendKeyAction.Execute(AWindow: HWND);
-begin
-  Windows.PostMessage(AWindow, WM_KEYDOWN, FKey, 0);
-  Windows.PostMessage(AWindow, WM_KEYUP, FKey, 0);
-end;
-
-{ TCloseWindowAction }
-
-procedure TCloseWindowAction.Execute(AWindow: HWND);
-begin
-  Windows.SendMessage(AWindow, WM_CLOSE, 0, 0);
+  Result := TFutureWindow.Create(AParent, AWindowClass, AWaitSeconds);
 end;
 
 { TAbstractFutureWindow }
-
 function TAbstractFutureWindow.ExecAction(const AAction: IFutureWindowAction): IFutureWindow;
 begin
   if FActions = nil then
@@ -646,10 +234,10 @@ procedure TAbstractFutureWindow.ExecuteActions(AWindow: HWND);
 var
   i: Integer;
 begin
-  log('executing actions for: ' + GetDesciption);
+  {$ifdef EnableLogging}log('executing actions for: ' + GetDesciption);{$endif}
   Assert(AWindow <> 0);
-  for i := 0 to ActionsCount - 1 do
-    Actions[i].Execute(AWindow);
+  for i := 0 to GetActionsCount - 1 do
+    GetAction(i).Execute(AWindow);
 end;
 
 function TAbstractFutureWindow.GetAction(AIndex: Integer): IFutureWindowAction;
@@ -667,44 +255,67 @@ end;
 
 { TFutureWindowObserver }
 procedure TFutureWindowObserver.CheckFutureWindows;
+type
+  PEnumProcParams = ^TEnumProcParams;
+  TEnumProcParams = record
+    current_process_id: Cardinal;
+    windows_list: TList;
+  end;
 
   function enum_windows_proc(AHandle: HWND; AParam: LPARAM): Boolean; stdcall;
   var
-    list: TList;
+    windowProcessId: Cardinal;
+    params: PEnumProcParams;
   begin
-    if IsWindow(AHandle) and
+    params := PEnumProcParams(AParam);
+    GetWindowThreadProcessId(AHandle, windowProcessId);
+    if (windowProcessId = params^.current_process_id) and
        IsWindowVisible(AHandle) and
        IsWindowEnabled(AHandle) then
-    begin
-      list := TList(AParam);
-      list.Add(Pointer(AHandle));
-    end;
+      params^.windows_list.Add(Pointer(AHandle));
     Result := True;
   end;
 
 var
   i: Integer;
-  list: TList;
+  params: TEnumProcParams;
 begin
-  if GetFutureWindowsCount > 0 then
-  begin
-    list := TList.Create;
+  if FNotifying or (GetFutureWindowsCount = 0) then  Exit;
+
+  FNotifying := True;
+  try
+    params.current_process_id := FCurrentProcessId;
+    params.windows_list := TList.Create;
     try
-      EnumWindows(@enum_windows_proc, Integer(list));
-      for i := 0 to list.Count - 1 do
-        CheckFutureWindowsForHandle(HWND(list[i]));
+      EnumWindows(@enum_windows_proc, Integer(@params));
+      for i := 0 to params.windows_list.Count - 1 do
+        CheckFutureWindowsForHandle(HWND(params.windows_list[i]));
     finally
-      list.Free
+      params.windows_list.Free
     end;
+  finally
+    FNotifying := False;
+  end;
+
+  if FWindowsToUnregister <> nil then
+  begin
+    for i := 0 to FWindowsToUnregister.Count - 1 do
+      UnRegisterFutureWindow(FWindowsToUnregister[i] as IFutureWindowEx);
+    FWindowsToUnregister := nil;
   end;
 end;
 
 procedure TFutureWindowObserver.CheckFutureWindowsForHandle(AHandle: HWND);
 var
   i: Integer;
+  fw: IFutureWindowEx;
 begin
   for i := GetFutureWindowsCount - 1 downto 0 do
-    GetFutureWindow(i).CheckWindow(AHandle);
+  begin
+    fw := GetFutureWindow(i);
+    if (FWindowsToUnregister = nil) or (FWindowsToUnregister.IndexOf(fw) = -1) then
+      fw.CheckWindow(AHandle);
+  end;
 end;
 
 constructor TFutureWindowObserver.Create;
@@ -771,13 +382,20 @@ begin
   end;
 end;
 
-procedure TFutureWindowObserver.UnRegisterFutureWindow(
-  const AWindow: IFutureWindowEx);
+procedure TFutureWindowObserver.UnRegisterFutureWindow(const AWindow: IFutureWindowEx);
 begin
-  Assert(FFutureWindows.IndexOf(AWindow) > -1);
-  FFutureWindows.Remove(AWindow);
-  if FFutureWindows.Count = 0 then
-    StopTimer;
+  if FNotifying then
+  begin
+    if FWindowsToUnregister = nil then
+      FWindowsToUnregister := TInterfaceList.Create;
+    FWindowsToUnregister.Add(AWindow);
+  end
+  else
+  begin
+    FFutureWindows.Remove(AWindow);
+    if FFutureWindows.Count = 0 then
+      StopTimer;
+  end;
 end;
 
 procedure TFutureWindowObserver.WndProc(var AMsg: TMessage);
@@ -785,32 +403,37 @@ begin
   case AMsg.Msg of
     WM_TIMER:
       CheckFutureWindows();
-    WM_CHECK_FUTURE_WINDOWS:
-      CheckFutureWindows();
   else
     DefWindowProc(FHandle, AMsg.Msg, AMsg.WParam, AMsg.LParam)
   end;
 end;
 
 { TNonThreadedFutureWindow }
-
-procedure TNonThreadedFutureWindow.CheckWindow(AHandle: HWND);
+procedure TFutureWindow.CheckWindow(AHandle: HWND);
 var
   buffer: array[Byte] of Char;
 begin
-  Windows.GetClassName(AHandle, @buffer, Length(buffer));
-  FWindowFound :=
-     ((FParentWnd = 0) or (GetParent(AHandle) = FParentWnd)) and
-     (StrComp(buffer, PChar(FWindowClass)) = 0);
-  if FWindowFound then
+  Assert(not FWindowFound);
+  Assert(not FTimedOut);
+
+  if ((FParentWnd = 0) or (GetParent(AHandle) = FParentWnd)) then
   begin
-    TFutureWindowObserver.Instance.UnRegisterFutureWindow(Self);
-    ExecuteActions(AHandle);
+    Windows.GetClassName(AHandle, @buffer, Length(buffer));
+    FWindowFound := StrComp(buffer, PChar(FWindowClass)) = 0;
   end;
+
+  if not FWindowFound then
+    FTimedOut := GetTickCount > (FStartedMillis + Round(FWaitSecs * 1000));
+
+  if FWindowFound or FTimedOut then
+    TFutureWindowObserver.Instance.UnRegisterFutureWindow(Self);
+
+  if FWindowFound then
+    ExecuteActions(AHandle)
 end;
 
-constructor TNonThreadedFutureWindow.Create(AParent: HWND;
-  const AWindowClass: string; AWaitSecs: Cardinal);
+constructor TFutureWindow.Create(AParent: HWND;
+  const AWindowClass: string; AWaitSecs: Double);
 begin
   inherited Create;
   FParentWnd := AParent;
@@ -818,12 +441,18 @@ begin
   FWaitSecs := AWaitSecs;
 end;
 
-function TNonThreadedFutureWindow.GetDesciption: string;
+destructor TFutureWindow.Destroy;
+begin
+  TFutureWindowObserver.Instance.UnRegisterFutureWindow(Self);
+  inherited;
+end;
+
+function TFutureWindow.GetDesciption: string;
 begin
   Result := FWindowClass;
 end;
 
-function TNonThreadedFutureWindow.StartWaiting: IFutureWindow;
+function TFutureWindow.StartWaiting: IFutureWindow;
 begin
   if FStartedMillis = 0 then
   begin
@@ -833,23 +462,45 @@ begin
   Result := Self;
 end;
 
-function TNonThreadedFutureWindow.TimedOut: Boolean;
+function TFutureWindow.TimedOut: Boolean;
 begin
   Result := FTimedOut;
 end;
 
-function TNonThreadedFutureWindow.WaitFor: Boolean;
-begin
-  Result := False;
-end;
-
-function TNonThreadedFutureWindow.WindowFound: Boolean;
+function TFutureWindow.WindowFound: Boolean;
 begin
   Result := FWindowFound;
 end;
 
-{ TPauseAction }
+{ TVCLControlAction }
+procedure TVCLControlAction.Execute(AWindow: HWND);
+var
+  control: TControl;
+begin
+  control := FindControl(AWindow);
+  Assert(control <> nil);
+  DoExecute(control);
+end;
 
+{ TSendVKeyAction }
+constructor TSendKeyAction.Create(AKey: Word);
+begin
+  FKey := AKey
+end;
+
+procedure TSendKeyAction.Execute(AWindow: HWND);
+begin
+  Windows.PostMessage(AWindow, WM_KEYDOWN, FKey, 0);
+  Windows.PostMessage(AWindow, WM_KEYUP, FKey, 0);
+end;
+
+{ TCloseWindowAction }
+procedure TCloseWindowAction.Execute(AWindow: HWND);
+begin
+  Windows.SendMessage(AWindow, WM_CLOSE, 0, 0);
+end;
+
+{ TPauseAction }
 constructor TPauseAction.Create(ASeconds: Double; AProcessMessagesProc: TProcessMessagesProc);
 begin
   Assert(Assigned(AProcessMessagesProc));
@@ -859,20 +510,23 @@ end;
 
 procedure TPauseAction.Execute(AWindow: HWND);
 var
-  finish: Cardinal;
+  now, finish: Cardinal;
 begin
   if FSeconds = 0 then
     FProcessMessagesProc()
   else
   begin
-    finish := GetTickCount + Round(FSeconds * 1000);
-    while GetTickCount < finish do
+    now := GetTickCount;
+    finish := now + Round(FSeconds * 1000);
+    while now < finish do
+    begin
       FProcessMessagesProc();
+      now := GetTickCount;
+    end;
   end;
 end;
 
 initialization
 finalization
-  TTheadSynchronizer.Finalize;
   TFutureWindowObserver.Finalize;
 end.
