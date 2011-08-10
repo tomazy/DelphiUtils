@@ -1,0 +1,10 @@
+This project contains:
+
+  UnitTesting - utilities helpful in unit testing.
+  -----------
+    + FutureWindows.pas - simple "framework" for testing modal windows. 
+
+  Demos - samples demonstrating how to use the utilities.
+  -----
+
+Licensed under BSD
