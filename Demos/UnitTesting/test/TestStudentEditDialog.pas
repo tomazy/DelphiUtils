@@ -37,10 +37,10 @@ uses
   FutureWindows;
 
 type
-  TStudentEditDialogFutureWindowAction = class(TVCLControlAction)
+  TStudentEditDialogFutureWindowAction = class(TAbstractWindowAction)
   protected
     procedure ExecuteFormAction(AForm: TStudentEditDialog); virtual; abstract;
-    procedure DoExecute(AControl: TControl); override;
+    procedure Execute(const AWindow: IWindow); override;
   end;
 
   TEditStudentFutureWindowAction = class(TStudentEditDialogFutureWindowAction)
@@ -70,11 +70,9 @@ type
   published
     procedure TestEdit;
     procedure TestCloseAction;
-    procedure TestTimeOut;
   end;
 
 { TStudentEditDialogTestCase }
-
 procedure TStudentEditDialogTestCase.TestCloseAction;
 var
   student: IStudent;
@@ -117,34 +115,11 @@ begin
   CheckEquals(dateOfBirth, student.DateOfBirth, 0.1);
 end;
 
-procedure TStudentEditDialogTestCase.TestTimeOut;
-var
-  futureMessageBox,
-  fakeFutureWindow: IFutureWindow;
-begin
-  // this should timeout
-  fakeFutureWindow := TFutureWindows.Expect('abc', 0.1)
-    .ExecCloseWindow();
-
-
-  futureMessageBox := TFutureWindows.Expect(MESSAGE_BOX_WINDOW_CLASS)
-    .ExecPauseAction(0.5, Application.ProcessMessages)
-    .ExecSendKey(VK_RETURN);
-
-  MessageBox(0, nil, nil, MB_OK);
-
-  Check(futureMessageBox.WindowFound, 'window not found: ' + futureMessageBox.Description);
-  CheckFalse(futureMessageBox.TimedOut, 'window timed out: ' + futureMessageBox.Description);
-
-  Check(fakeFutureWindow.TimedOut, 'window not timed out: ' + fakeFutureWindow.Description);
-  CheckFalse(fakeFutureWindow.WindowFound, 'window found: ' + fakeFutureWindow.Description);
-end;
-
 { TStudentEditDialogTestAction }
-
-procedure TStudentEditDialogFutureWindowAction.DoExecute(AControl: TControl);
+procedure TStudentEditDialogFutureWindowAction.Execute(const AWindow: IWindow);
 begin
-  ExecuteFormAction(AControl as TStudentEditDialog);
+  Assert(AWindow.AsControl is TStudentEditDialog);
+  ExecuteFormAction(AWindow.AsControl as TStudentEditDialog);
 end;
 
 { TTestEditAction }
