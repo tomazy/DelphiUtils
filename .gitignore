@@ -1,6 +1,7 @@
 *.*~
 *.cbk
 *.dcu
+*.dll
 *.drc
 *.exe
 *.identcache
@@ -8,6 +9,7 @@
 *.map
 *.res
 *.tvsconfig
+*MemoryManager_EventLog.txt
 *~
 __history
 dunit.ini

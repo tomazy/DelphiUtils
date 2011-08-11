@@ -35,7 +35,9 @@ program DemoTests;
 {$APPTYPE CONSOLE}
 {$ENDIF}
 
+{$define FastMM}
 uses
+  {$ifdef FastMM}FastMM4,{$endif}
   Forms,
   TestFramework,
   GUITestRunner,
@@ -46,7 +48,8 @@ uses
   uStudentEditDialog in '..\src\uStudentEditDialog.pas' {StudentEditDialog},
   TestCaseBase in 'TestCaseBase.pas',
   TestStudentEditDialog in 'TestStudentEditDialog.pas',
-  TestMainForm in 'TestMainForm.pas';
+  TestMainForm in 'TestMainForm.pas',
+  TestFutureWindows in 'TestFutureWindows.pas';
 
 {$R *.RES}
 

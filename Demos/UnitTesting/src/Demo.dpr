@@ -30,7 +30,9 @@ History:
 }
 program Demo;
 
+{$define FastMM}
 uses
+  {$ifdef FastMM}FastMM4,{$endif}
   Forms,
   uModel in 'uModel.pas',
   uMainForm in 'uMainForm.pas' {MainForm},

@@ -36,24 +36,6 @@ uses
   uStudentEditDialog,
   FutureWindows;
 
-type
-  TStudentEditDialogFutureWindowAction = class(TAbstractWindowAction)
-  protected
-    procedure ExecuteFormAction(AForm: TStudentEditDialog); virtual; abstract;
-    procedure Execute(const AWindow: IWindow); override;
-  end;
-
-  TEditStudentFutureWindowAction = class(TStudentEditDialogFutureWindowAction)
-  strict private
-    FName: string;
-    FEmail: string;
-    FDate: TDate;
-  protected
-    procedure ExecuteFormAction(AForm: TStudentEditDialog); override;
-  public
-    constructor Create(const AName, AEmail: string; ADate: TDate);
-  end;
-
 implementation
 uses
   Windows,
@@ -68,8 +50,20 @@ uses
 type
   TStudentEditDialogTestCase = class(TTestCaseBase)
   published
-    procedure TestEdit;
+    procedure TestEditWithCustomAction;
+    procedure TestEditWithAnonymousProc;
     procedure TestCloseAction;
+  end;
+
+  TEditStudentFutureWindowAction = class(TAbstractWindowAction)
+  strict private
+    FName: string;
+    FEmail: string;
+    FDate: TDate;
+  protected
+    procedure Execute(const AWindow: IWindow); override;
+  public
+    constructor Create(const AName, AEmail: string; ADate: TDate);
   end;
 
 { TStudentEditDialogTestCase }
@@ -88,7 +82,7 @@ begin
   CheckFalse(TStudentEditDialog.Edit(student));
 end;
 
-procedure TStudentEditDialogTestCase.TestEdit;
+procedure TStudentEditDialogTestCase.TestEditWithCustomAction;
 var
   student: IStudent;
   futureWindow: IFutureWindow;
@@ -115,15 +109,60 @@ begin
   CheckEquals(dateOfBirth, student.DateOfBirth, 0.1);
 end;
 
-{ TStudentEditDialogTestAction }
-procedure TStudentEditDialogFutureWindowAction.Execute(const AWindow: IWindow);
+procedure TStudentEditDialogTestCase.TestEditWithAnonymousProc;
+var
+  student: IStudent;
+  futureWindow: IFutureWindow;
+  dateOfBirth: TDate;
+const
+  NAME  = 'John Doe';
+  EMAIL = 'john.doe@example.com';
 begin
-  Assert(AWindow.AsControl is TStudentEditDialog);
-  ExecuteFormAction(AWindow.AsControl as TStudentEditDialog);
+  dateOfBirth := EncodeDate(1980, 1, 1);
+
+  student := TModel.CreateStudent();
+
+  futureWindow := TFutureWindows.Expect(TStudentEditDialog.ClassName)
+    .SetExceptionHandler(Self)
+    .ExecProc(
+      // this will be called in future
+      procedure (const AWindow: IWindow)
+      var
+        form: TStudentEditDialog;
+      begin
+        form := AWindow.AsControl as TStudentEditDialog;
+
+        // we can call all TTestCase.Check* methods!
+        CheckNotNull(form);
+
+        // uncomment next line to see what happens if we get an exception
+        Fail('test');
+
+        TTestCaseBase.ProcessMessages(0.2);
+
+        form.edName.Text := NAME;
+        form.edEmail.Text := EMAIL;
+        form.dtpDateOfBirth.Date := dateOfBirth;
+
+        // let's see the changes
+        TTestCaseBase.ProcessMessages(0.2);
+
+        form.OKBtn.Click;
+      end
+  );
+
+  // this shows modal window
+  Check(TStudentEditDialog.Edit(student), 'failed to edit student');
+
+  Check(futureWindow.WindowFound, 'window not found: ' + futureWindow.Description);
+
+  // check successul edits
+  CheckEquals(NAME, student.Name);
+  CheckEquals(EMAIL, student.Email);
+  CheckEquals(dateOfBirth, student.DateOfBirth, 0.1);
 end;
 
 { TTestEditAction }
-
 constructor TEditStudentFutureWindowAction.Create(const AName, AEmail: string; ADate: TDate);
 begin
   FName := AName;
@@ -131,16 +170,21 @@ begin
   FDate := ADate;
 end;
 
-procedure TEditStudentFutureWindowAction.ExecuteFormAction(AForm: TStudentEditDialog);
+procedure TEditStudentFutureWindowAction.Execute(const AWindow: IWindow);
+var
+  dlg: TStudentEditDialog;
 begin
-  AForm.edName.Text := FName;
-  AForm.edEmail.Text := FEmail;
-  AForm.dtpDateOfBirth.Date := FDate;
+  Assert(AWindow.AsControl is TStudentEditDialog);
+  dlg := AWindow.AsControl as TStudentEditDialog;
+
+  dlg.edName.Text := FName;
+  dlg.edEmail.Text := FEmail;
+  dlg.dtpDateOfBirth.Date := FDate;
 
   // let us see the changes
   TTestCaseBase.ProcessMessages(0);
 
-  AForm.OKBtn.Click;
+  dlg.OKBtn.Click;
 end;
 
 initialization

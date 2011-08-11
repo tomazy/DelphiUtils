@@ -37,27 +37,58 @@ uses
   Windows,
   TestFramework,
   TestCaseBase,
-  FutureWindows, Forms;
+  FutureWindows,
+  SysUtils,
+  Forms,
+  Messages;
 
 type
-  TFutureWindowsTestCase = class(TTestCaseBase)
+  TFutureWindowsTestCase = class(TTestCaseBase, IExceptionHandler)
   published
-    procedure TestSetWindowText;
+    procedure TestAnonymousProc;
+    procedure TestExceptionInAnonymousProc;
     procedure TestTimeOut;
   end;
 { TFutureWindowsTestCase }
 
-type
-  TTestSetWindowTextAction = class(TAbstractWindowAction)
-  protected
-    procedure Execute(const AWindow: IWindow); override;
-  end;
-
-procedure TFutureWindowsTestCase.TestSetWindowText;
+procedure TFutureWindowsTestCase.TestAnonymousProc;
 begin
   TFutureWindows.Expect(MESSAGE_BOX_WINDOW_CLASS)
-    .ExecAction(TTestSetWindowTextAction.Create)
-    .ExecSendKey(VK_RETURN);
+    .ExecProc(
+      procedure (const AWindow: IWindow)
+      var
+        c: Char;
+      begin
+        ProcessMessages(0.3);
+        CheckEquals('', AWindow.Text);
+        AWindow.Text := '';
+
+        for c in Self.FTestName do
+        begin
+          AWindow.Text := AWindow.Text + c;
+
+          // sometimes it gets hidden
+          AWindow.BringToFront;
+
+          ProcessMessages(0.1);
+        end;
+      end
+    )
+    .ExecCloseWindow();
+
+  MessageBox(0, 'testing future window from anonymous proc', '', MB_OK);
+end;
+
+procedure TFutureWindowsTestCase.TestExceptionInAnonymousProc;
+begin
+  TFutureWindows.Expect(MESSAGE_BOX_WINDOW_CLASS)
+    .SetExceptionHandler(Self)
+    .ExecProc(
+      procedure (const AWindow: IWindow)
+      begin
+        Fail('This is intended failure!');
+      end
+    );
   MessageBox(0, '', '', MB_OK);
 end;
 
@@ -72,29 +103,15 @@ begin
 
   futureMessageBox := TFutureWindows.Expect(MESSAGE_BOX_WINDOW_CLASS)
     .ExecPauseAction(0.5, Application.ProcessMessages)
-    .ExecSendKey(VK_RETURN);
+    .ExecCloseWindow();
 
-  MessageBox(0, nil, nil, MB_OK);
+  MessageBox(0, 'test', 'test', MB_OK);
 
   Check(futureMessageBox.WindowFound, 'window not found: ' + futureMessageBox.Description);
   CheckFalse(futureMessageBox.TimedOut, 'window timed out: ' + futureMessageBox.Description);
 
   Check(fakeFutureWindow.TimedOut, 'window not timed out: ' + fakeFutureWindow.Description);
   CheckFalse(fakeFutureWindow.WindowFound, 'window found: ' + fakeFutureWindow.Description);
-end;
-
-{ TTestSetWindowTextAction }
-
-procedure TTestSetWindowTextAction.Execute(const AWindow: IWindow);
-const
-  TEST_STRING = 'This is a test';
-begin
-  Assert(AWindow.Text  = '');
-
-  AWindow.Text := TEST_STRING;
-  TTestCaseBase.ProcessMessages(0.3);
-
-  Assert(AWindow.Text  = TEST_STRING);
 end;
 
 initialization

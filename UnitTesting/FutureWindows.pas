@@ -28,9 +28,27 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 History:
  2011-08-08 - [tm] initial thread-based version
  2011-08-09 - [tm] refactored to non-threaded implementation
+ 2011-08-11 - [tm] added support for anonymous methods and exception handling
 
 TODO:
   - support for ansi/unicode windows
+
+Usage:
+
+  procedure test();
+  begin
+    TFutureWindows.Expect(MESSAGE_BOX_WINDOW_CLASS)
+      .ExecProc(
+        procedure (const AWindow: IWindow)
+        begin
+          AWindow.Text := 'Test';
+        end
+      )
+      .ExecCloseWindow();
+
+    MessageBox(0, 'testing future window', '', MB_OK);
+  end;
+
 }
 {.$define EnableLogging}
 unit FutureWindows;
@@ -38,7 +56,8 @@ interface
 uses
   Windows,
   Classes,
-  Controls;
+  Controls,
+  SysUtils;
 
 const
   MESSAGE_BOX_WINDOW_CLASS = '#32770';
@@ -48,11 +67,14 @@ type
     ['{1756ADCA-62F2-4B2C-BF04-2A7FDC993A5D}']
     function GetAsControl: TControl;
     function GetHandle: HWND;
+    function GetHeight: Integer;
     function GetParent: IWindow;
     function GetProcessId: Cardinal;
+    function GetRect: TRect;
     function GetText: string;
     function GetTextLen: Integer;
     function GetThreadId: Cardinal;
+    function GetWidth: Integer;
     function GetWindowClass: string;
     function IsEnabled: Boolean;
     function IsUnicode: Boolean;
@@ -60,10 +82,14 @@ type
     function IsWindowValid: Boolean;
     function PostMessage(Msg: UINT; wParam: WPARAM; lParam: LPARAM): Boolean;
     function SendMessage(Msg: UINT; wParam: WPARAM; lParam: LPARAM): Integer;
+    procedure BringToFront;
+    procedure SetHeight(const Value: Integer);
     procedure SetText(const Value: string);
+    procedure SetWidth(const Value: Integer);
     property AsControl: TControl read GetAsControl;
     property Enabled: Boolean read IsEnabled;
     property Handle: HWND read GetHandle;
+    property Height: Integer read GetHeight write SetHeight;
     property Parent: IWindow read GetParent;
     property ProcessId: Cardinal read GetProcessId;
     property Text: string read GetText write SetText;
@@ -72,6 +98,7 @@ type
     property Unicode: Boolean read IsUnicode;
     property Valid: Boolean read IsWindowValid;
     property Visible: Boolean read IsVisible;
+    property Width: Integer read GetWidth write SetWidth;
     property WindowClass: string read GetWindowClass;
   end;
 
@@ -81,13 +108,20 @@ type
   end;
 
   TProcessMessagesProc = procedure of object;
+  TWindowActionProc = reference to procedure(const AWindow: IWindow);
+
+  IExceptionHandler = interface
+    procedure HandleException(AExceptObject: TObject; AExceptAddr: Pointer);
+  end;
 
   IFutureWindow = interface
     function ExecAction(const AAction: IWindowAction): IFutureWindow;
+    function ExecProc(const AWindowActionProc: TWindowActionProc): IFutureWindow;
     function ExecCloseWindow(): IFutureWindow;
     function ExecPauseAction(ASeconds: Double; AProcessMessagesProc: TProcessMessagesProc): IFutureWindow;
     function ExecSendKey(AKey: Word): IFutureWindow;
     function GetDesciption: string;
+    function SetExceptionHandler(const AHandler: IExceptionHandler): IFutureWindow;
     function TimedOut: Boolean;
     function WindowFound: Boolean;
     property Description: string read GetDesciption;
@@ -99,6 +133,13 @@ type
     class function GetWindow(AHandle: THandle): IWindow;
   end;
 
+  TWindowActions = class
+    class function CreateCloseWindowAction(): IWindowAction;
+    class function CreatePauseAction(ASeconds: Double; AProcessMessagesProc: TProcessMessagesProc): IWindowAction;
+    class function CreateProcAction(const AWindowActionProc: TWindowActionProc): IWindowAction;
+    class function CreateSendKeyAction(AKey: Word): IWindowAction;
+  end;
+
   TAbstractWindowAction = class(TInterfacedObject, IWindowAction)
   protected
     procedure Execute(const AWindow: IWindow); virtual; abstract;
@@ -106,8 +147,7 @@ type
 
 implementation
 uses
-  Messages,
-  SysUtils;
+  Messages;
 
 type
   PControl = ^TControl;
@@ -120,14 +160,18 @@ type
     FControl: PControl;
     FParent: IWindow;
     procedure InitThreadIdAndProcessId;
+    procedure SetWindowSize(AWidth, AHeight: Integer);
   private
     function GetAsControl: TControl;
     function GetHandle: HWND;
+    function GetHeight: Integer;
     function GetParent: IWindow;
     function GetProcessId: Cardinal;
+    function GetRect: TRect;
     function GetText: string;
     function GetTextLen: Integer;
     function GetThreadId: Cardinal;
+    function GetWidth: Integer;
     function GetWindowClass: string;
     function IsEnabled: Boolean;
     function IsUnicode: Boolean;
@@ -135,7 +179,10 @@ type
     function IsWindowValid: Boolean;
     function PostMessage(Msg: UINT; wParam: WPARAM; lParam: LPARAM): Boolean;
     function SendMessage(Msg: UINT; wParam: WPARAM; lParam: LPARAM): Integer;
+    procedure BringToFront;
+    procedure SetHeight(const Value: Integer);
     procedure SetText(const Value: string);
+    procedure SetWidth(const Value: Integer);
   public
     constructor Create(AHandle: HWND);
     destructor Destroy; override;
@@ -151,25 +198,36 @@ type
     property Valid: Boolean read IsWindowValid;
     property Visible: Boolean read IsVisible;
     property WindowClass: string read GetWindowClass;
+    property Width: Integer read GetWidth write SetWidth;
+    property Height: Integer read GetHeight write SetHeight;
   end;
 
   TAbstractFutureWindow = class(TInterfacedObject, IFutureWindow)
   strict private
     FActions: IInterfaceList;
+    FExecException: Exception;
+    FExecExceptAddr: Pointer;
+    FExceptionHandler: IExceptionHandler;
     function GetAction(AIndex: Integer): IWindowAction;
     function GetActionsCount: Integer;
+    procedure CheckRaiseExecException;
+    procedure TryCloseWindow(const AWindow: IWindow);
   protected
     function StartWaiting(): IFutureWindow; virtual; abstract;
     procedure ExecuteActions(const AWindow: IWindow);
   protected
     { IFutureWindow }
     function ExecAction(const AAction: IWindowAction): IFutureWindow;
+    function ExecProc(const AWindowActionProc: TWindowActionProc): IFutureWindow;
     function ExecCloseWindow(): IFutureWindow;
     function ExecPauseAction(ASeconds: Double; AProcessMessagesProc: TProcessMessagesProc): IFutureWindow;
     function ExecSendKey(AKey: Word): IFutureWindow;
     function GetDesciption: string; virtual; abstract;
+    function SetExceptionHandler(const AHandler: IExceptionHandler): IFutureWindow;
     function TimedOut: Boolean; virtual; abstract;
     function WindowFound: Boolean; virtual; abstract;
+  public
+    destructor Destroy; override;
   end;
 
 //==============================================================================
@@ -245,6 +303,15 @@ type
   end;
 
 //===================== ACTIONS ================================================
+  TWindowActionProcAction = class(TAbstractWindowAction)
+  strict private
+    FProc: TWindowActionProc;
+  protected
+    procedure Execute(const AWindow: IWindow); override;
+  public
+    constructor Create(const AProc: TWindowActionProc);
+  end;
+
   TSendKeyAction = class(TAbstractWindowAction)
   strict private
     FKey: Word;
@@ -298,6 +365,25 @@ begin
 end;
 
 { TAbstractFutureWindow }
+procedure TAbstractFutureWindow.CheckRaiseExecException;
+var
+  e: Exception;
+begin
+  if FExecException <> nil then
+  begin
+    e := FExecException;
+    FExecException := nil;
+    raise e at FExecExceptAddr;
+  end;
+end;
+
+destructor TAbstractFutureWindow.Destroy;
+begin
+  FActions := nil;
+  inherited;
+  CheckRaiseExecException;
+end;
+
 function TAbstractFutureWindow.ExecAction(const AAction: IWindowAction): IFutureWindow;
 begin
   if FActions = nil then
@@ -306,19 +392,24 @@ begin
   Result := StartWaiting();
 end;
 
+function TAbstractFutureWindow.ExecProc(const AWindowActionProc: TWindowActionProc): IFutureWindow;
+begin
+  Result := ExecAction(TWindowActionProcAction.Create(AWindowActionProc));
+end;
+
 function TAbstractFutureWindow.ExecCloseWindow: IFutureWindow;
 begin
-  Result := ExecAction(TCloseWindowAction.Create)
+  Result := ExecAction(TWindowActions.CreateCloseWindowAction());
 end;
 
 function TAbstractFutureWindow.ExecPauseAction(ASeconds: Double; AProcessMessagesProc: TProcessMessagesProc): IFutureWindow;
 begin
-  Result := ExecAction(TPauseAction.Create(ASeconds, AProcessMessagesProc));
+  Result := ExecAction(TWindowActions.CreatePauseAction(ASeconds, AProcessMessagesProc));
 end;
 
 function TAbstractFutureWindow.ExecSendKey(AKey: Word): IFutureWindow;
 begin
-  Result := ExecAction(TSendKeyAction.Create(AKey))
+  Result := ExecAction(TWindowActions.CreateSendKeyAction(AKey))
 end;
 
 procedure TAbstractFutureWindow.ExecuteActions(const AWindow: IWindow);
@@ -328,8 +419,19 @@ begin
   Assert(AWindow <> nil);
   Assert(AWindow.Valid);
   {$ifdef EnableLogging}log('executing actions for: ' + GetDesciption);{$endif}
-  for i := 0 to GetActionsCount - 1 do
-    GetAction(i).Execute(AWindow);
+  try
+    for i := 0 to GetActionsCount - 1 do
+      GetAction(i).Execute(AWindow);
+  except
+    if  FExceptionHandler <>  nil then
+      FExceptionHandler.HandleException(AcquireExceptionObject, ExceptAddr)
+    else
+    begin
+      FExecExceptAddr := ExceptAddr;
+      FExecException  := AcquireExceptionObject;
+    end;
+    TryCloseWindow(AWindow);
+  end;
 end;
 
 function TAbstractFutureWindow.GetAction(AIndex: Integer): IWindowAction;
@@ -343,6 +445,17 @@ begin
     Result := 0
   else
     Result := FActions.Count;
+end;
+
+function TAbstractFutureWindow.SetExceptionHandler(const AHandler: IExceptionHandler): IFutureWindow;
+begin
+  FExceptionHandler := AHandler;
+  Result := Self;
+end;
+
+procedure TAbstractFutureWindow.TryCloseWindow(const AWindow: IWindow);
+begin
+  TWindowActions.CreateCloseWindowAction().Execute(AWindow);
 end;
 
 { TFutureWindowObserver }
@@ -525,6 +638,11 @@ destructor TFutureWindow.Destroy;
 begin
   {$ifdef EnableLogging}log(Self.ToString + '.Destroy');{$endif}
   TFutureWindowObserver.Instance.UnRegisterCallback(CheckWindow);
+
+  // we might be raising en exception in inherited destructor so manually clean
+  // as much as possible
+  FWindowClass := '';
+
   inherited;
 end;
 
@@ -600,6 +718,11 @@ end;
 
 { TWindow }
 
+procedure TWindow.BringToFront;
+begin
+  Windows.BringWindowToTop(FHandle)
+end;
+
 constructor TWindow.Create(AHandle: HWND);
 begin
   FHandle := AHandle;
@@ -626,6 +749,14 @@ begin
   Result := FHandle
 end;
 
+function TWindow.GetHeight: Integer;
+var
+  r: TRect;
+begin
+  r := GetRect;
+  Result := r.Bottom - r.Top
+end;
+
 function TWindow.GetParent: IWindow;
 begin
   if FParent = nil then
@@ -637,6 +768,12 @@ function TWindow.GetProcessId: Cardinal;
 begin
   InitThreadIdAndProcessId;
   Result := FProcessId;
+end;
+
+function TWindow.GetRect: TRect;
+begin
+  if not Windows.GetWindowRect(FHandle, Result) then
+    Result := Rect(0, 0, 0, 0);
 end;
 
 function TWindow.GetText: string;
@@ -658,6 +795,14 @@ function TWindow.GetThreadId: Cardinal;
 begin
   InitThreadIdAndProcessId;
   Result := FThreadId;
+end;
+
+function TWindow.GetWidth: Integer;
+var
+  r: TRect;
+begin
+  r := GetRect;
+  Result := r.Right - r.Left
 end;
 
 function TWindow.GetWindowClass: string;
@@ -716,9 +861,29 @@ begin
     Result := Windows.SendMessageA(FHandle, Msg, wParam, lParam)
 end;
 
+procedure TWindow.SetHeight(const Value: Integer);
+begin
+  SetWindowSize(Width, Value);
+end;
+
 procedure TWindow.SetText(const Value: string);
 begin
   SendMessage(WM_SETTEXT, 0, Integer(PChar(Value)));
+end;
+
+procedure TWindow.SetWidth(const Value: Integer);
+begin
+  SetWindowSize(Value, Height);
+end;
+
+procedure TWindow.SetWindowSize(AWidth, AHeight: Integer);
+begin
+  Windows.SetWindowPos(FHandle, 0, 0, 0,
+    AWidth, AHeight,
+    SWP_NOZORDER or
+    SWP_NOMOVE or
+    SWP_NOACTIVATE
+  )
 end;
 
 { TWindowCallbackList }
@@ -810,6 +975,42 @@ var
 begin
   if Find(ACallback, idx) then
     Delete(idx);
+end;
+
+{ TWindowActionProcAction }
+
+constructor TWindowActionProcAction.Create(const AProc: TWindowActionProc);
+begin
+  FProc := AProc;
+end;
+
+procedure TWindowActionProcAction.Execute(const AWindow: IWindow);
+begin
+  FProc(AWindow);
+end;
+
+{ TWindowActions }
+
+class function TWindowActions.CreateCloseWindowAction: IWindowAction;
+begin
+  Result := TCloseWindowAction.Create
+end;
+
+class function TWindowActions.CreatePauseAction(ASeconds: Double;
+  AProcessMessagesProc: TProcessMessagesProc): IWindowAction;
+begin
+  Result := TPauseAction.Create(ASeconds, AProcessMessagesProc);
+end;
+
+class function TWindowActions.CreateProcAction(
+  const AWindowActionProc: TWindowActionProc): IWindowAction;
+begin
+  Result := TWindowActionProcAction.Create(AWindowActionProc);
+end;
+
+class function TWindowActions.CreateSendKeyAction(AKey: Word): IWindowAction;
+begin
+  Result := TSendKeyAction.Create(AKey);
 end;
 
 initialization

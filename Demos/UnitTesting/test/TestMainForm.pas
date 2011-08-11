@@ -51,7 +51,7 @@ type
   TMainFormTestCase = class(TTestCaseBase)
   strict private
     FMainForm: TMainForm;
-    procedure ExecuteAction(AAction: TAction);
+    procedure ExecuteMainFormAction(AAction: TAction);
     procedure AddStudent(const AName, AEmail: string; ADateOfBirth: TDate);
     procedure AddStudents(ACount: Cardinal);
   protected
@@ -69,11 +69,24 @@ procedure TMainFormTestCase.AddStudent(const AName, AEmail: string;
   ADateOfBirth: TDate);
 begin
   TFutureWindows.Expect(TStudentEditDialog.ClassName, 1)
-    .ExecAction(TEditStudentFutureWindowAction.Create(
-      AName, AEmail, ADateOfBirth
-    ));
+    .ExecProc(
+      procedure (const AWindow: IWindow)
+      var
+        form: TStudentEditDialog;
+      begin
+        form := AWindow.AsControl as TStudentEditDialog;
+        form.edName.Text := AName;
+        form.edEmail.Text := AEmail;
+        form.dtpDateOfBirth.Date := ADateOfBirth;
 
-  ExecuteAction(FMainForm.acNewStudent);
+        // let us see the changes
+        TTestCaseBase.ProcessMessages(0);
+
+        form.OKBtn.Click;
+      end
+    );
+
+  ExecuteMainFormAction(FMainForm.acNewStudent);
 end;
 
 procedure TMainFormTestCase.AddStudents(ACount: Cardinal);
@@ -90,11 +103,11 @@ begin
   end;
 end;
 
-procedure TMainFormTestCase.ExecuteAction(AAction: TAction);
+procedure TMainFormTestCase.ExecuteMainFormAction(AAction: TAction);
 begin
   ProcessMessages();
   AAction.Update;
-  Check(AAction.Enabled, AAction.Caption + ' disabled');
+  Check(AAction.Enabled, AAction.Name + ' disabled');
   AAction.Execute;
 end;
 
@@ -168,11 +181,11 @@ begin
     FMainForm.CurrentStudent := student;
     Check(student = FMainForm.CurrentStudent);
 
-    // close future confirmation dialog
+    // close future confirmation dialog by hitting [Enter]
     TFutureWindows.ExpectChild(FMainForm.Handle, MESSAGE_BOX_WINDOW_CLASS, 1)
       .ExecSendKey(VK_RETURN);
 
-    ExecuteAction(FMainForm.acDeleteStudent);
+    ExecuteMainFormAction(FMainForm.acDeleteStudent);
 
     Inc(delCount);
   end;

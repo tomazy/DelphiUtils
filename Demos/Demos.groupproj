@@ -3,6 +3,9 @@
 			<ProjectGuid>{7779F189-F899-47A5-9FAA-73FA2505277B}</ProjectGuid>
 		</PropertyGroup>
 		<ItemGroup>
+			<Projects Include="comps\Libs.dproj">
+				<Dependencies/>
+			</Projects>
 			<Projects Include="UnitTesting\src\Demo.dproj">
 				<Dependencies/>
 			</Projects>
@@ -17,6 +20,15 @@
 				<Default.Personality/>
 			</BorlandProject>
 		</ProjectExtensions>
+		<Target Name="Libs">
+			<MSBuild Projects="comps\Libs.dproj"/>
+		</Target>
+		<Target Name="Libs:Clean">
+			<MSBuild Targets="Clean" Projects="comps\Libs.dproj"/>
+		</Target>
+		<Target Name="Libs:Make">
+			<MSBuild Targets="Make" Projects="comps\Libs.dproj"/>
+		</Target>
 		<Target Name="Demo">
 			<MSBuild Projects="UnitTesting\src\Demo.dproj"/>
 		</Target>
@@ -36,13 +48,13 @@
 			<MSBuild Targets="Make" Projects="UnitTesting\test\DemoTests.dproj"/>
 		</Target>
 		<Target Name="Build">
-			<CallTarget Targets="Demo;DemoTests"/>
+			<CallTarget Targets="Libs;Demo;DemoTests"/>
 		</Target>
 		<Target Name="Clean">
-			<CallTarget Targets="Demo:Clean;DemoTests:Clean"/>
+			<CallTarget Targets="Libs:Clean;Demo:Clean;DemoTests:Clean"/>
 		</Target>
 		<Target Name="Make">
-			<CallTarget Targets="Demo:Make;DemoTests:Make"/>
+			<CallTarget Targets="Libs:Make;Demo:Make;DemoTests:Make"/>
 		</Target>
 		<Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 	</Project>
