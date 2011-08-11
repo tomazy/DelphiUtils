@@ -136,7 +136,7 @@ begin
         CheckNotNull(form);
 
         // uncomment next line to see what happens if we get an exception
-        Fail('test');
+        //Fail('test');
 
         TTestCaseBase.ProcessMessages(0.2);
 

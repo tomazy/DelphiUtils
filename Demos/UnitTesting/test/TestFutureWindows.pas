@@ -48,6 +48,7 @@ type
     procedure TestAnonymousProc;
     procedure TestExceptionInAnonymousProc;
     procedure TestTimeOut;
+    procedure TestSample;
   end;
 { TFutureWindowsTestCase }
 
@@ -90,6 +91,32 @@ begin
       end
     );
   MessageBox(0, '', '', MB_OK);
+end;
+
+procedure TFutureWindowsTestCase.TestSample;
+begin
+  TFutureWindows.Expect(TForm.ClassName)
+    .ExecProc(
+       procedure (const AWindow: IWindow)
+       var
+         myForm: TForm;
+       begin
+         myForm := AWindow.AsControl as TForm;
+         myForm.Caption := 'test caption';
+         myForm.Close();
+       end
+    );
+
+  with TForm.Create(Application) do
+  try
+    Caption := '';
+
+    ShowModal();
+
+    CheckEquals('test caption', Caption);
+  finally
+    Free;
+  end;
 end;
 
 procedure TFutureWindowsTestCase.TestTimeOut;
