@@ -45,7 +45,8 @@ uses
   TestStudentEditDialog,
   SysUtils,
   uModel,
-  Windows;
+  Windows,
+  Messages;
 
 type
   TMainFormTestCase = class(TTestCaseBase)
@@ -61,6 +62,7 @@ type
     procedure TestAddNewStudent;
     procedure TestAddManyStudents;
     procedure TestDeleteStudents;
+    procedure TestValidation;
   end;
 
 { TMainFormTestCase }
@@ -191,6 +193,54 @@ begin
   end;
 
   CheckEquals(NUM_STUDENTS, delCount);
+end;
+
+procedure TMainFormTestCase.TestValidation;
+var
+  studentEditForm: TStudentEditDialog;
+  exceptionErrorDlg: IFutureWindow;
+begin
+  studentEditForm := nil;
+
+  // wait for exception dialog
+  exceptionErrorDlg := TFutureWindows.Expect(MESSAGE_BOX_WINDOW_CLASS)
+    .ExecProc(
+      procedure (const AWindow: IWindow)
+      var
+        errorMsg: string;
+      begin
+        ProcessMessages(0.2);
+
+        errorMsg := AWindow.Text;
+
+        // first close the error dialog
+        AWindow.SendMessage(WM_CLOSE, 0, 0);
+
+        CheckNotNull(studentEditForm, 'studentEditForm');
+
+        // close the student editor
+        studentEditForm.CancelBtn.Click;
+      end
+    );
+
+  TFutureWindows.Expect(TStudentEditDialog.ClassName, 1)
+    .ExecProc(
+      procedure (const AWindow: IWindow)
+      begin
+        studentEditForm := AWindow.AsControl as TStudentEditDialog;
+        studentEditForm.edName.Text := '';
+
+        // let us see the changes
+        TTestCaseBase.ProcessMessages(0);
+
+        // this should raise a validation exception
+        studentEditForm.OKBtn.Click;
+      end
+    );
+
+  ExecuteMainFormAction(FMainForm.acNewStudent);
+
+  Check(exceptionErrorDlg.WindowFound, 'Exception dialog was not shown');
 end;
 
 initialization
